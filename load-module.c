@@ -6,7 +6,7 @@
 #include <sys/stat.h>
 #include <stdbool.h>
 #include <stdlib.h>
-
+#include <errno.h>
 #define FINIT_SYSCALL 313
 #define MODULE_DEL_SYSCALL 176
 
@@ -17,6 +17,7 @@ int main(int argc, char* argv[]) {
         int s_value = 10;
         if(load_module()) {
                 printf("[*]Failed loading module\n");
+                perror("err:");
                 return -1;
         }
         else {
