@@ -4,6 +4,8 @@
 #include <linux/delay.h>
 #include <linux/fs.h>
 #include <linux/slab.h>
+#include <linux/uaccess.h>
+
 
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -14,13 +16,30 @@ int test_open(struct inode * i, struct file * f) {
 }
 
 ssize_t test_read(struct file * f, char __user * us, size_t s, loff_t * lf) {
+    char* buff = kmalloc(1024,GFP_KERNEL);
+    strcpy(buff,"test works for real real\n");
+    if(copy_to_user(us,buff,70)) {
+        pr_info("***failed to write to user space\n");
+    }
     pr_info("***file read %d\n",s);
+    kfree(buff);
+    return s;
+}
+ssize_t test_write(struct file * f, const char __user * us, size_t s, loff_t * lf) {
+    char* buff = kmalloc(s,GFP_KERNEL);
+    if(copy_from_user(buff,us,(unsigned long)s)) {
+         pr_info("***failed to read from user space\n");
+    }
+    printk(buff);
+    pr_info("***wrote to file\n");
+    kfree(buff);
     return s;
 }
 
 static const struct file_operations test_fops = {
     .open = test_open,
     .read = test_read,
+    .write = test_write,
 };
 
 static struct miscdevice test_device = { 
