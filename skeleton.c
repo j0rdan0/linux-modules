@@ -5,6 +5,7 @@
 #include <linux/fs.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
+#include <linux/sched/signal.h>
 
 
 
@@ -16,9 +17,16 @@ int test_open(struct inode * i, struct file * f) {
 }
 
 ssize_t test_read(struct file * f, char __user * us, size_t s, loff_t * lf) {
-    char* buff = kmalloc(1024,GFP_KERNEL);
-    strcpy(buff,"test works for real real\n");
-    if(copy_to_user(us,buff,70)) {
+    struct task_struct* proc;
+    char* buff = kmalloc(4096,GFP_KERNEL);
+    for_each_process(proc) {
+        //printk(proc->comm);
+        strcat(buff,proc->comm);
+        strcat(buff," ");
+    }
+    printk(buff);
+
+    if(copy_to_user(us,buff,4096)) {
         pr_info("***failed to write to user space\n");
     }
     pr_info("***file read %d\n",s);
