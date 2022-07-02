@@ -1,3 +1,6 @@
+
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/miscdevice.h>
@@ -6,10 +9,10 @@
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/sched/signal.h>
+#include <linux/preempt.h>
 
 
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 int test_open(struct inode * i, struct file * f) {
     pr_info("***file opened\n");
@@ -20,18 +23,16 @@ ssize_t test_read(struct file * f, char __user * us, size_t s, loff_t * lf) {
     struct task_struct* proc;
     char* buff = kmalloc(4096,GFP_KERNEL);
     for_each_process(proc) {
-        //printk(proc->comm);
         strcat(buff,proc->comm);
         strcat(buff," ");
     }
-    printk(buff);
 
     if(copy_to_user(us,buff,4096)) {
         pr_info("***failed to write to user space\n");
     }
     pr_info("***file read %d\n",s);
     kfree(buff);
-    return s;
+    return s; // need to return 0 to have cat not loop ?
 }
 ssize_t test_write(struct file * f, const char __user * us, size_t s, loff_t * lf) {
     char* buff = kmalloc(s,GFP_KERNEL);
@@ -62,7 +63,28 @@ static int __init skeleton_init(void) {
     pr_info("[*] loaded debug module\n");
     msleep(1000);
     pr_info("*** after sleeping\n");
-    
+    printk("test_write at: 0x%px\n",test_write);
+    // get_nr_threads(p) - get threads no of task
+    if ( likely(in_task())) {
+         printk("current process: %s at 0x%px has stack at 0x%px at has %d threads \n",current->comm,current,current->stack,get_nr_threads(current));
+    }
+   else {
+    printk("running in interrupt context\n");
+   }
+
+    struct task_struct* t,*p;
+
+    // iterate over each thread
+    int t_no = 0;
+   do_each_thread(p,t){
+        task_lock(t);
+        printk("TGID: %d PID: %d Comm: %s\n",t->tgid,t->pid,t->comm);
+        t_no++;
+        task_unlock(t);
+   } while_each_thread(p,t);
+
+    printk("%d threads running\n",t_no);
+
     int ret;
     ret = misc_register(&test_device);
     if (ret != 0) {
