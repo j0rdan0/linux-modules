@@ -1,126 +1,151 @@
-
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
+#include <linux/mm.h>
 #include <linux/init.h>
-#include <linux/miscdevice.h>
-#include <linux/delay.h>
-#include <linux/fs.h>
+#include <linux/kernel.h>
 #include <linux/slab.h>
-#include <linux/uaccess.h>
-#include <linux/sched/signal.h>
+#include <linux/string.h>
+#include <linux/sched.h>
 #include <linux/preempt.h>
+#include <linux/sched/signal.h>
+#include <linux/gfp.h>
+#include <asm/pgtable.h>
+#include <linux/vmalloc.h>
+#include <asm/io.h>
+#include <linux/cdev.h>
+#include <linux/fs.h>
+#include <linux/umh.h>
+#include <linux/file.h>
+#include <linux/rcupdate.h> 
+#include <linux/fdtable.h>
+#include <linux/xarray.h>
+#include <linux/pagemap.h>
+#include <linux/highmem.h>
 
+#define PID 715289 
 
+static void get_process_file(void) {
+	struct pid* pid = find_get_pid(PID);
+	void *entry;
+	unsigned long index;
+	struct task_struct* sshd = get_pid_task(pid,PIDTYPE_PID);
+	struct fdtable* fdt = rcu_dereference(sshd->files->fdt);
+	struct file** f = rcu_dereference(fdt->fd);
+	struct xarray *pages;
+	pr_info("max fds for sshd: %d\n",fdt->max_fds);
+	struct inode* inode = f[5]->f_inode;
+	struct address_space* mapping = inode->i_mapping;
+	pages =  &mapping->i_pages;
+	xa_for_each(pages, index, entry) {
+        struct page *page;
+	char* data;
+        // Check if entry is a page
+        if (xa_is_value(entry)) {
+            pr_info("Index %lu: xa_value entry\n", index);
+            continue;
+        }
 
+        page = entry;
+        if (page) {
+		  data = kmap_local_page(page);
 
+            pr_info("Index %lu: Page found, flags: 0x%lx\n", index, page->flags);
+if (data) {
+                // Print the first 64 bytes of the page as a hex dump
+                pr_info("Index %lu: Page data (first 64 bytes):\n", index);
+                print_hex_dump(KERN_INFO, "  ", DUMP_PREFIX_OFFSET, 16, 1, data, 64, true);
 
-int test_open(struct inode * i, struct file * f) {
-    pr_info("***file opened\n");
-    return 0;
-}
-
-ssize_t test_read(struct file * f, char __user * us, size_t s, loff_t * lf) {
-    struct task_struct* proc;
-    char* buff = kmalloc(4096,GFP_KERNEL);
-    for_each_process(proc) {
-        strcat(buff,proc->comm);
-        strcat(buff," ");
+                // Unmap the page
+                kunmap_local(data);
+            } else {
+                pr_warn("Failed to map page at index %lu\n", index);
+            }
+        }
+	if ( index == 10) {
+		break;
+	}
     }
 
-    if(copy_to_user(us,buff,4096)) {
-        pr_info("***failed to write to user space\n");
-    }
-    pr_info("***file read %d\n",s);
-    kfree(buff);
-    return s; // need to return 0 to have cat not loop ?
 }
-ssize_t test_write(struct file * f, const char __user * us, size_t s, loff_t * lf) {
-    char* buff = kmalloc(s,GFP_KERNEL);
-    if(copy_from_user(buff,us,(unsigned long)s)) {
-         pr_info("***failed to read from user space\n");
-    }
-    printk(buff);
-    pr_info("***wrote to file\n");
-    kfree(buff);
-    return s;
+static void run_usermode_app(void) {
+	char path[] = "/bin/dd";
+	static char* envp[] = { 
+		"HOME=/",
+		"TERM=linux",
+		"PATH=/sbin:/usr/sbin:/bin:/usr/bin",
+		NULL
+	};
+	char** argv = kmalloc(sizeof(char* [5]),GFP_KERNEL);
+	argv[0] = "/bin/dd";
+	argv[1] = "status=none";
+	argv[2] = "if=/etc/passwd";
+	argv[3] = "of=/tmp/passwd";
+	argv[4] = NULL;
+	int ret = call_usermodehelper(path,argv,envp,UMH_KILLABLE);
+	pr_info("returned with code: %d\n",ret);
+	kfree(argv);	
 }
 
-static const struct file_operations test_fops = {
-    .open = test_open,
-    .read = test_read,
-    .write = test_write,
-};
+static void add_char_dev(void) {
+	struct cdev* test_cdev = cdev_alloc();
+	dev_t d;
+	alloc_chrdev_region(&d,1, 20, "test_cdev");
 
-static struct miscdevice test_device = { 
-    .minor = MISC_DYNAMIC_MINOR,
-    .name = "test_device",
-    .mode = 0666,
-    .fops = &test_fops, 
-};
+	struct file_operations f_ops;
+	cdev_init(test_cdev,&f_ops);
+	int ret = cdev_add(test_cdev,d,1);
+	if ( ret < 0) {
+		pr_warn("failed to add char device to system");
+	}
+	else {
+		pr_info("added char device to system with major no: %d\n",d);
+
+		cdev_del(test_cdev);
+		pr_info("remove char device from system");
+	}
+
+}
+
+
+// to test that kmalloc allocates contigous memory, while vmalloc does not
+static void kmalloc_test(void) {
+
+	void* buff = kmalloc(PAGE_SIZE*3,GFP_KERNEL);
+
+	pr_info("allocated mem at with kmalloc: %pK, PA: 0x%lx\n",buff,virt_to_phys(buff));
+	pr_info("second page of buffer allocated with kmalloc at PA: 0x%lx\n",virt_to_phys(buff+PAGE_SIZE));
+	pr_info("third page of buffer allocated with kmalloc at PA: 0x%lx\n",virt_to_phys(buff+(PAGE_SIZE*2)));
+
+	void* buff_v = vmalloc(PAGE_SIZE*3);
+
+	pr_info("allocated mem at with vmalloc: %pK\n",buff_v);
+	struct page* p = vmalloc_to_page(buff_v);
+	pr_info("got page at: %pK with PA: 0x%llx\n",p,(unsigned long long)page_to_phys(p));
+	p = vmalloc_to_page(buff_v+PAGE_SIZE);
+
+	pr_info("got page 2 at: %pK with PA: 0x%llx\n",p,(unsigned long long)page_to_phys(p));
+
+	p = vmalloc_to_page(buff_v+(PAGE_SIZE*2));
+
+	
+	pr_info("got page 3 at: %pK with PA: 0x%llx\n",p,(unsigned long long)page_to_phys(p));
+
+	kfree(buff);
+	vfree(buff_v);
+}
 
 
 static int __init skeleton_init(void) {
     pr_info("[*] loaded debug module\n");
-    msleep(1000);
-    pr_info("*** after sleeping\n");
-    printk("test_write at: 0x%px\n",test_write);
-    // get_nr_threads(p) - get threads no of task
-    if ( likely(in_task())) {
-         printk("current process: %s at 0x%px has stack at 0x%px at has %d threads \n",current->comm,current,current->stack,get_nr_threads(current));
-    }
-   else {
-    printk("running in interrupt context\n");
-   }
-
-    struct task_struct* t,*p;
-
-    // iterate over each thread
-    int t_no = 0;
-   do_each_thread(p,t){
-        task_lock(t);
-        printk("TGID: %d PID: %d Comm: %s\n",t->tgid,t->pid,t->comm);
-        t_no++;
-        task_unlock(t);
-   } while_each_thread(p,t);
-
-    printk("%d threads running\n",t_no);
-    
-    int ret;
-    ret = misc_register(&test_device);
-    if (ret != 0) {
-        pr_fmt("failed to register test device\n");
-        return ret;   
-    }
-    char msg[1024];
-    sprintf(msg,"registered device %s\n",test_device.name);
-    char* buff = kmalloc(128*1024,GFP_KERNEL);
-    printk("allocated 128kb\n");
-    kfree(buff);
-    printk("freed 128kb chunk\n");
-    static int step = 100;
-    void* chunk;
-    while (1) {
-        chunk = kmalloc(1024*step,GFP_KERNEL);
-        if(!chunk) {
-            pr_warn("[*]failed to allocate %d\n",(1024*step));
-            break;
-        }
-        pr_info("[*]requested %d and allocated %u at 0x%px\n",(1024*step),ksize(chunk),chunk);
-        kfree(chunk);
-        step += 200;
-        
-    }
-
-    printk(msg);
-    
+//    kmalloc_test();
+//	add_char_dev();
+//	run_usermode_app();
+	get_process_file();
     return 0;
-}
+    }
 
 static void __exit skeleton_exit(void) {
     pr_info("[*] unloaded debug module\n");
-    misc_deregister(&test_device);
-    pr_fmt("deregistered device\n");   
+
   
 }
 
@@ -129,3 +154,6 @@ module_exit(skeleton_exit);
 
 
 MODULE_LICENSE("GPL");
+MODULE_INFO(info,"testing shit in kernel mode, cuz why not");
+MODULE_ALIAS("skel");
+MODULE_DESCRIPTION("trying kernel development");
