@@ -20,8 +20,25 @@
 #include <linux/xarray.h>
 #include <linux/pagemap.h>
 #include <linux/highmem.h>
+#define PID 10822
+#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
 
-#define PID 715289 
+struct proc_dir_entry* d_test;
+static int test_fs_show(struct seq_file* m,void* v) {
+	seq_puts(m,"testing procfs usage");
+	seq_putc(m,'\n');
+	return 0;
+}
+
+static int test_proc_init(void) {
+	d_test = proc_create_single("testing",0,NULL,test_fs_show);
+	return 0;
+}
+static int test_proc_exit(void) {
+	proc_remove(d_test);
+	return 0;
+}
 
 static void get_process_file(void) {
 	struct pid* pid = find_get_pid(PID);
@@ -35,6 +52,35 @@ static void get_process_file(void) {
 	struct inode* inode = f[5]->f_inode;
 	struct address_space* mapping = inode->i_mapping;
 	pages =  &mapping->i_pages;
+
+	if (mapping_empty(mapping)) {
+			pr_info("mapping for file empty");
+			return;
+	}
+	else {
+		pr_info("mapping of file not empty");
+		char* data_temp;
+		struct page* temp = read_cache_page(mapping,0,0,data_temp);
+		if(temp != NULL) {
+			lock_page(temp);
+			pr_info("got page:");
+			data_temp=kmap(temp);
+			print_hex_dump(KERN_INFO,"",DUMP_PREFIX_OFFSET,16,1,data_temp,64,true);
+			kunmap(temp);
+			unlock_page(temp);
+			put_page(temp);
+		}
+		else {
+			pr_warn("failed getting page for mapping");
+		}
+	}
+	struct page* cache_page = pagecache_get_page(mapping,0,0x00000100,GFP_KERNEL);
+	if(cache_page == NULL) {
+		pr_warn("failed getting cached page");
+	}
+	else {
+		pr_info("got cached page at: 0x%p\n",cache_page);
+	}
 	xa_for_each(pages, index, entry) {
         struct page *page;
 	char* data;
@@ -136,14 +182,12 @@ static void kmalloc_test(void) {
 
 static int __init skeleton_init(void) {
     pr_info("[*] loaded debug module\n");
-//    kmalloc_test();
-//	add_char_dev();
-//	run_usermode_app();
-	get_process_file();
+    test_proc_init();
     return 0;
     }
 
 static void __exit skeleton_exit(void) {
+	test_proc_exit();
     pr_info("[*] unloaded debug module\n");
 
   

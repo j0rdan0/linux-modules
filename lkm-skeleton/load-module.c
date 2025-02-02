@@ -21,6 +21,7 @@ struct module_info {
 bool load_module(char*);
 bool unload_module(char*);
 // to add parameters for only loading/unloading the module, otherwise I can`t have this fully working for complex shit
+// also, to modify script to receive kernel module parameters, for not having to hardcode shit inside the code
 bool find_module(struct module_info*);
 
 int main(int argc, char* argv[]) {
@@ -33,6 +34,37 @@ int main(int argc, char* argv[]) {
 		printf("[*] Failed finding module in current dir, exiting");
 		return -1;
 	}
+	if (argc > 2) {
+			if (strcmp(argv[2],"load") == 0) {
+				if(load_module(info.filename)) {
+					printf("[*]Failed loading module\n");
+					perror("err");
+					return -1;
+				}
+				else {
+					printf("[*]Loaded module\n");
+					return 0;
+				}
+			
+			}
+
+			else if (strcmp(argv[2],"unload") == 0) {
+				if (!unload_module(info.name)) {
+        				printf("[*]Unloaded module\n");
+					return 0;
+        			}
+        			else {
+                			printf("[*] Failed unloading module\n");
+                			perror("err");
+                			return -1;
+
+        			}
+			}	
+			else {
+				printf("usage: %s\n <timeout> <load/unload>\n",argv[0]);
+				return -1;
+			}
+		}
 
     if(load_module(info.filename)) {
         printf("[*]Failed loading module\n");
@@ -63,6 +95,7 @@ bool load_module(char* filename) {
 		return false;
 	}
         char null[] ="";
+	// will need to modify null to get the passed module params
         long ret = syscall(FINIT_SYSCALL,fd,null,0);
         close(fd);
         return (!ret) ? false: true;
