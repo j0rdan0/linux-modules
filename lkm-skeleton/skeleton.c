@@ -37,22 +37,24 @@ static ssize_t test_read(struct file* filp,char __user* buff,size_t len,loff_t* 
 	return copy_to_user(buff,msg,strlen(msg));
 }
 static ssize_t test_write(struct file* filp,const char __user* buff,size_t len,loff_t* offset) {
-	char* msg = kmalloc(len,GFP_KERNEL);
+	char* msg = kmalloc(len+1,GFP_KERNEL);
 	ssize_t wrote;
-	wrote =  copy_from_user(msg,buff,strlen(buff));
+	wrote = len - copy_from_user(msg,buff,len);
 	if(len >0)
 	{
+		msg[wrote] = '\0';
 		pr_info("read from userpasce: %s\n",msg);
 	}
+	kfree(msg);
 	return wrote;
 }
 static int test_open(struct inode* inode, struct file* filp) {
-	pr_info("opened device with inode: %d\n",inode->i_ino);
+	pr_info("opened device with inode: %ul\n",filp->f_inode->i_ino);
 	return 0;
 
 }
 static int test_release(struct inode* inode,struct file* filp) {
-	pr_info("closed device with inode: %d\n",inode->i_ino);
+	pr_info("closed device with inode: %ul\n",inode->i_ino);
 	return 0;
 }
 
@@ -72,7 +74,7 @@ static int register_dummy_dev(void) {
 		return -1;
 	}
 	pr_info("created char device with major no: %d\n",major_no);
-	pr_info("finish creation with: mknode /dev/test-dev c %d 0\n",major_no);
+	pr_info("finish creation with: mknod /dev/test-dev c %d 0\n",major_no);
 	return 0;
 }
 
