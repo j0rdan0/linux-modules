@@ -23,6 +23,66 @@
 #define PID 10822
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <linux/wait.h>
+#include <linux/types.h>
+#include <linux/uaccess.h>
+
+
+int major_no;
+int reg_err;
+
+static ssize_t test_read(struct file* filp,char __user* buff,size_t len,loff_t* offset) {
+	char* msg = "from kernel space";
+	pr_info("writing to userspace");
+	return copy_to_user(buff,msg,strlen(msg));
+}
+static ssize_t test_write(struct file* filp,const char __user* buff,size_t len,loff_t* offset) {
+	char* msg = kmalloc(len,GFP_KERNEL);
+	ssize_t wrote;
+	wrote =  copy_from_user(msg,buff,strlen(buff));
+	if(len >0)
+	{
+		pr_info("read from userpasce: %s\n",msg);
+	}
+	return wrote;
+}
+static int test_open(struct inode* inode, struct file* filp) {
+	pr_info("opened device with inode: %d\n",inode->i_ino);
+	return 0;
+
+}
+static int test_release(struct inode* inode,struct file* filp) {
+	pr_info("closed device with inode: %d\n",inode->i_ino);
+	return 0;
+}
+
+
+const static struct file_operations fops = {
+	.read = test_read,
+	.write = test_write,
+	.open = test_open,
+	.release = test_release
+
+};
+
+static int register_dummy_dev(void) {
+	major_no = register_chrdev(0,"test-dev",&fops);
+	if(major_no < 0) {
+		pr_warn("failed creating char device\n");
+		return -1;
+	}
+	pr_info("created char device with major no: %d\n",major_no);
+	pr_info("finish creation with: mknode /dev/test-dev c %d 0\n",major_no);
+	return 0;
+}
+
+
+static void get_size(void) {
+	struct wait_queue_head t;
+	struct fdtable fdtab;
+	pr_info("sizoef struct wait %d , sizeof fdtable:%d\n",sizeof(t),sizeof(fdtab));
+
+}
 
 struct proc_dir_entry* d_test;
 static int test_fs_show(struct seq_file* m,void* v) {
@@ -180,14 +240,43 @@ static void kmalloc_test(void) {
 }
 
 
+struct file* f = NULL;
+static int get_file2(char* filename) {
+	 f = filp_open(filename,O_RDONLY,0);
+	if (IS_ERR(f)) {
+		pr_warn("failed openinig file %s\n",filename);
+		return -1;
+
+	}
+	else {
+		pr_info("opened file %s\n",filename);
+		int size = (f->f_inode->i_size)*8; // converting to bits from bytes size
+		pr_info("size %d\n",size);
+		char* buff = kmalloc(size,GFP_KERNEL);
+		loff_t pos = 0;
+		kernel_read(f,buff,size,&pos);
+		pr_info("%s\n",buff);
+
+	}
+	return 0;
+
+}
+
 static int __init skeleton_init(void) {
     pr_info("[*] loaded debug module\n");
-    test_proc_init();
+    char* filename = "/etc/passwd";
+    get_file2(filename);
+    reg_err = register_dummy_dev();
     return 0;
     }
 
 static void __exit skeleton_exit(void) {
-	test_proc_exit();
+	if(f != NULL) {
+		filp_close(f,0);
+	}
+	if(reg_err == 0) {
+		unregister_chrdev(major_no,"test-dev");
+	}
     pr_info("[*] unloaded debug module\n");
 
   
